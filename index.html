@@ -22,10 +22,16 @@
 
   .app{display:flex;flex-direction:column;height:100vh;position:relative}
 
+  /* ---------- auto-hiding top bar ---------- */
   .topbar{
     display:flex;align-items:center;gap:10px;padding:0 12px;height:52px;
-    background:var(--panel);border-bottom:1px solid var(--border);flex:0 0 auto;z-index:30;
+    background:var(--panel);border-bottom:1px solid var(--border);flex:0 0 auto;z-index:40;
+    position:fixed;top:0;left:0;right:0;
+    transform:translateY(-100%);
+    transition:transform .18s ease;
   }
+  .topbar.visible{ transform:translateY(0); }
+
   .brand{font-weight:700;letter-spacing:.3px;white-space:nowrap;display:flex;align-items:center;gap:8px}
   .brand .dot{width:10px;height:10px;border-radius:50%;background:var(--accent);box-shadow:0 0 10px var(--accent)}
   .layouts{display:flex;gap:4px;margin-left:8px;flex-wrap:wrap;overflow:hidden}
@@ -42,6 +48,9 @@
   }
   .tbtn:hover{background:#222c3d}
   .tbtn.danger:hover{background:#5a1f1f;border-color:#7a2a2a;color:#ffb3b3}
+
+  /* ---------- HIDDEN UI (only these four) ---------- */
+  .brand, #layouts, #btnMuteAll, #btnCloseAll { display:none !important; }
 
   .body{flex:1;display:flex;min-height:0}
 
@@ -99,7 +108,6 @@
   .paste-btn:hover{background:var(--accent);border-color:var(--accent);color:#fff}
   .paste-btn.textarea-btn{height:auto;min-height:36px}
 
-  /* ---------- QR / phone remote ---------- */
   .qr-box{
     background:#fff;padding:14px;border-radius:12px;
     display:flex;justify-content:center;align-items:center;
@@ -184,7 +192,6 @@
   }
   .tbtn-i:hover{background:var(--accent);border-color:var(--accent)}
 
-  /* Popup-blocked toast inside a tile */
   .tile-toast{
     position:absolute;left:8px;right:8px;bottom:8px;z-index:7;
     background:rgba(76,141,255,.92);color:#fff;font-size:11.5px;
@@ -212,8 +219,6 @@
     .sidebar{position:absolute;top:0;bottom:0;left:0;z-index:25;width:88%;flex-basis:88%;
       box-shadow:0 0 40px rgba(0,0,0,.6)}
     .sidebar.collapsed{margin-left:-100%}
-    .brand span:last-child{display:none}
-    .layouts{margin-left:0}
     .topbar{overflow-x:auto;overflow-y:hidden}
   }
   ::-webkit-scrollbar{width:9px;height:9px}
@@ -226,7 +231,7 @@
 
 <div class="app">
 
-  <header class="topbar">
+  <header class="topbar" id="topbar">
     <div class="brand"><span class="dot"></span><span>MultiPlay</span></div>
     <div class="layouts" id="layouts"></div>
     <div class="spacer"></div>
@@ -401,13 +406,36 @@ const grid    = $('#grid');
 const emptyEl = $('#empty');
 
 /* =========================================================
-   POPUP BLOCKER — global guards
-   ---------------------------------------------------------
-   These apply to the *main page*. Iframe content is blocked
-   separately via the iframe `sandbox` attribute (see below).
+   Auto-hiding top bar
    ========================================================= */
+const topbar = document.getElementById('topbar');
 
-/* 1. Kill window.open entirely */
+document.addEventListener('mousemove', e => {
+  if (e.clientY < 60){
+    topbar.classList.add('visible');
+  } else if (e.clientY > 100){
+    topbar.classList.remove('visible');
+  }
+});
+
+/* Clicking a button inside the header hides it after the
+   click fires. Clicking on empty header space hides it too. */
+topbar.addEventListener('click', e => {
+  if (e.target.closest('button')) return;
+  topbar.classList.remove('visible');
+});
+
+/* Touch devices: tap near the top to peek at the header */
+document.addEventListener('touchstart', e => {
+  const t = e.touches && e.touches[0];
+  if (!t) return;
+  if (t.clientY < 60) topbar.classList.add('visible');
+  else if (t.clientY > 120) topbar.classList.remove('visible');
+}, { passive:true });
+
+/* =========================================================
+   POPUP BLOCKER — global guards
+   ========================================================= */
 const _nativeOpen = window.open;
 window.open = function(url){
   if (state.settings.blockPopups){
@@ -417,7 +445,6 @@ window.open = function(url){
   return _nativeOpen.apply(window, arguments);
 };
 
-/* 2. Kill target=_blank / _top / _parent clicks before they escape */
 document.addEventListener('click', e => {
   if (!state.settings.blockPopups) return;
   const a = e.target.closest && e.target.closest('a');
@@ -430,7 +457,6 @@ document.addEventListener('click', e => {
   }
 }, true);
 
-/* 3. Neutralise form targets that would break out of the app */
 document.addEventListener('submit', e => {
   if (!state.settings.blockPopups) return;
   const f = e.target;
@@ -441,11 +467,6 @@ document.addEventListener('submit', e => {
     console.warn('[MultiPlay] Blocked form target=' + t);
   }
 }, true);
-
-/* 4. Block any sneaky top-level navigation away from the player */
-window.addEventListener('beforeunload', e => {
-  /* Only warn — never actually block the user's own actions */
-});
 
 /* =========================================================
    Grid layouts
@@ -528,7 +549,7 @@ async function fetchText(url){
 }
 
 /* =========================================================
-   Tile-level toast (for showing "popup blocked" notices)
+   Tile-level toast
    ========================================================= */
 function tileToast(tile, msg){
   let toast = tile.el.querySelector('.tile-toast');
@@ -554,7 +575,7 @@ function addTile(src){
     type: src.type || detectType(src.url),
     url: src.url,
     title: src.title || guessTitle(src.url),
-    muted: true,   /* ALWAYS start muted so autoplay is allowed */
+    muted: true,
     hls: null, video: null, iframe: null, el: null, muteBtn: null
   };
 
@@ -659,22 +680,6 @@ function mountMedia(tile){
   if (tile.type === 'iframe'){
     const f = document.createElement('iframe');
 
-    /*
-      SANDBOX = the popup blocker for iframes.
-      We deliberately OMIT:
-         allow-popups                     → blocks window.open()
-         allow-popups-to-escape-sandbox   → keeps any popup inside the sandbox
-         allow-top-navigation             → blocks navigating the parent page
-         allow-top-navigation-by-user-activation → also blocks user-forced top nav
-         allow-modals                     → blocks alert/confirm/prompt inside iframe
-      We KEEP:
-         allow-scripts                    → sites that need JS still work
-         allow-same-origin                → keeps cookies/sessionStorage working
-         allow-forms                      → login/forms still work
-         allow-presentation               → fullscreen still works
-         allow-pointer-lock               → mouse capture for players
-         allow-downloads                  → legit downloads still work
-    */
     if (state.settings.blockPopups){
       f.setAttribute('sandbox',
         'allow-scripts allow-same-origin allow-forms allow-presentation ' +
@@ -924,7 +929,6 @@ $('#setExclusive').addEventListener('change', e => { state.settings.exclusive = 
 $('#setBlockPopups').addEventListener('change', e => {
   state.settings.blockPopups = e.target.checked;
   saveSettings();
-  /* Reload every iframe tile so the sandbox change takes effect */
   state.tiles.forEach(t => { if (t.type === 'iframe') mountMedia(t); });
 });
 
