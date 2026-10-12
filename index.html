@@ -184,6 +184,17 @@
   }
   .tbtn-i:hover{background:var(--accent);border-color:var(--accent)}
 
+  /* Popup-blocked toast inside a tile */
+  .tile-toast{
+    position:absolute;left:8px;right:8px;bottom:8px;z-index:7;
+    background:rgba(76,141,255,.92);color:#fff;font-size:11.5px;
+    padding:6px 10px;border-radius:6px;display:flex;align-items:center;gap:6px;
+    box-shadow:0 4px 14px rgba(0,0,0,.4);
+    opacity:0;transform:translateY(6px);transition:opacity .2s, transform .2s;
+    pointer-events:none;
+  }
+  .tile-toast.show{opacity:1;transform:translateY(0)}
+
   .tile-err{
     position:absolute;inset:0;display:none;flex-direction:column;align-items:center;justify-content:center;
     gap:10px;background:rgba(10,12,18,.92);color:#ffb3b3;text-align:center;padding:18px;z-index:5;font-size:12px;line-height:1.5;
@@ -339,13 +350,21 @@ http://server/stream1/index.m3u8"></textarea>
               Use <code>{url}</code> as the placeholder — otherwise the URL is appended.
             </p>
           </div>
+
           <label class="check">
             <input type="checkbox" id="setExclusive" checked>
             Exclusive audio — unmuting a tile mutes the others
           </label>
+
+          <label class="check">
+            <input type="checkbox" id="setBlockPopups" checked>
+            Block popups, redirects &amp; new tabs
+          </label>
           <p class="hint">
-            Tiles start <b>muted</b> so the browser allows autoplay. Click 🔊 on a tile to enable sound.
+            Sandboxes embedded websites so they can't open new windows, top‑navigate your page,
+            or spawn ads. Tiles are reloaded when you change this.
           </p>
+
           <button class="btn ghost" id="btnReset">Reset settings</button>
         </section>
 
@@ -375,11 +394,58 @@ const esc = s => String(s ?? '').replace(/[&<>"']/g,
 
 const state = {
   tiles: [], channels: [], layout: 'auto', seq: 0,
-  settings: { proxy: '', exclusive: true }
+  settings: { proxy: '', exclusive: true, blockPopups: true }
 };
 
 const grid    = $('#grid');
 const emptyEl = $('#empty');
+
+/* =========================================================
+   POPUP BLOCKER — global guards
+   ---------------------------------------------------------
+   These apply to the *main page*. Iframe content is blocked
+   separately via the iframe `sandbox` attribute (see below).
+   ========================================================= */
+
+/* 1. Kill window.open entirely */
+const _nativeOpen = window.open;
+window.open = function(url){
+  if (state.settings.blockPopups){
+    console.warn('[MultiPlay] Blocked window.open →', url);
+    return null;
+  }
+  return _nativeOpen.apply(window, arguments);
+};
+
+/* 2. Kill target=_blank / _top / _parent clicks before they escape */
+document.addEventListener('click', e => {
+  if (!state.settings.blockPopups) return;
+  const a = e.target.closest && e.target.closest('a');
+  if (!a) return;
+  const t = (a.getAttribute('target') || '').toLowerCase();
+  if (t === '_blank' || t === '_top' || t === '_parent'){
+    e.preventDefault();
+    e.stopPropagation();
+    console.warn('[MultiPlay] Blocked new-tab link →', a.href);
+  }
+}, true);
+
+/* 3. Neutralise form targets that would break out of the app */
+document.addEventListener('submit', e => {
+  if (!state.settings.blockPopups) return;
+  const f = e.target;
+  const t = (f.getAttribute('target') || '').toLowerCase();
+  if (t === '_blank' || t === '_top' || t === '_parent'){
+    e.preventDefault();
+    e.stopPropagation();
+    console.warn('[MultiPlay] Blocked form target=' + t);
+  }
+}, true);
+
+/* 4. Block any sneaky top-level navigation away from the player */
+window.addEventListener('beforeunload', e => {
+  /* Only warn — never actually block the user's own actions */
+});
 
 /* =========================================================
    Grid layouts
@@ -462,6 +528,22 @@ async function fetchText(url){
 }
 
 /* =========================================================
+   Tile-level toast (for showing "popup blocked" notices)
+   ========================================================= */
+function tileToast(tile, msg){
+  let toast = tile.el.querySelector('.tile-toast');
+  if (!toast){
+    toast = document.createElement('div');
+    toast.className = 'tile-toast';
+    tile.el.appendChild(toast);
+  }
+  toast.innerHTML = '🛡️ ' + esc(msg);
+  toast.classList.add('show');
+  clearTimeout(toast._t);
+  toast._t = setTimeout(() => toast.classList.remove('show'), 2600);
+}
+
+/* =========================================================
    Tiles
    ========================================================= */
 function addTile(src){
@@ -472,8 +554,7 @@ function addTile(src){
     type: src.type || detectType(src.url),
     url: src.url,
     title: src.title || guessTitle(src.url),
-    /* ALWAYS start muted so the browser allows autoplay */
-    muted: true,
+    muted: true,   /* ALWAYS start muted so autoplay is allowed */
     hls: null, video: null, iframe: null, el: null, muteBtn: null
   };
 
@@ -574,17 +655,43 @@ function mountMedia(tile){
   if (tile.iframe){ tile.iframe = null; }
   holder.innerHTML = '';
 
+  /* ---------- website embed ---------- */
   if (tile.type === 'iframe'){
     const f = document.createElement('iframe');
-    f.src = tile.url;
-    f.setAttribute('allow', 'autoplay; fullscreen; encrypted-media; picture-in-picture; clipboard-write');
+
+    /*
+      SANDBOX = the popup blocker for iframes.
+      We deliberately OMIT:
+         allow-popups                     → blocks window.open()
+         allow-popups-to-escape-sandbox   → keeps any popup inside the sandbox
+         allow-top-navigation             → blocks navigating the parent page
+         allow-top-navigation-by-user-activation → also blocks user-forced top nav
+         allow-modals                     → blocks alert/confirm/prompt inside iframe
+      We KEEP:
+         allow-scripts                    → sites that need JS still work
+         allow-same-origin                → keeps cookies/sessionStorage working
+         allow-forms                      → login/forms still work
+         allow-presentation               → fullscreen still works
+         allow-pointer-lock               → mouse capture for players
+         allow-downloads                  → legit downloads still work
+    */
+    if (state.settings.blockPopups){
+      f.setAttribute('sandbox',
+        'allow-scripts allow-same-origin allow-forms allow-presentation ' +
+        'allow-pointer-lock allow-downloads');
+    }
+
+    f.setAttribute('allow',
+      'autoplay; fullscreen; encrypted-media; picture-in-picture; clipboard-write');
     f.setAttribute('allowfullscreen', '');
     f.setAttribute('referrerpolicy', 'no-referrer');
+    f.src = tile.url;
     holder.appendChild(f);
     tile.iframe = f;
     return;
   }
 
+  /* ---------- video / HLS ---------- */
   const video = document.createElement('video');
   video.controls = true;
   video.autoplay = true;
@@ -810,22 +917,35 @@ $('#btnMuteAll').onclick = () => {
 };
 $('#btnToggleSidebar').onclick = () => { $('#sidebar').classList.toggle('collapsed'); };
 
+/* --- Settings --- */
 $('#setProxy').addEventListener('input', e => { state.settings.proxy = e.target.value; saveSettings(); });
 $('#setExclusive').addEventListener('change', e => { state.settings.exclusive = e.target.checked; saveSettings(); });
+
+$('#setBlockPopups').addEventListener('change', e => {
+  state.settings.blockPopups = e.target.checked;
+  saveSettings();
+  /* Reload every iframe tile so the sandbox change takes effect */
+  state.tiles.forEach(t => { if (t.type === 'iframe') mountMedia(t); });
+});
+
 $('#btnReset').onclick = () => {
-  state.settings = { proxy: '', exclusive: true };
-  $('#setProxy').value = ''; $('#setExclusive').checked = true;
+  state.settings = { proxy: '', exclusive: true, blockPopups: true };
+  $('#setProxy').value = '';
+  $('#setExclusive').checked = true;
+  $('#setBlockPopups').checked = true;
   saveSettings(); setStatus('');
 };
 function saveSettings(){ try { localStorage.setItem('multiplay', JSON.stringify(state.settings)); } catch(e){} }
 function loadSettings(){
   try {
     const s = JSON.parse(localStorage.getItem('multiplay') || '{}');
-    if (typeof s.proxy === 'string')   state.settings.proxy = s.proxy;
-    if (typeof s.exclusive === 'boolean') state.settings.exclusive = s.exclusive;
+    if (typeof s.proxy === 'string')        state.settings.proxy = s.proxy;
+    if (typeof s.exclusive === 'boolean')   state.settings.exclusive = s.exclusive;
+    if (typeof s.blockPopups === 'boolean') state.settings.blockPopups = s.blockPopups;
   } catch(e){}
   $('#setProxy').value = state.settings.proxy;
   $('#setExclusive').checked = state.settings.exclusive;
+  $('#setBlockPopups').checked = state.settings.blockPopups;
 }
 
 /* =========================================================
@@ -859,11 +979,6 @@ document.querySelectorAll('.paste-btn[data-paste]').forEach(btn => {
 
 /* =========================================================
    Phone Remote — QR + ntfy.sh relay
-   =========================================================
-   The QR encodes a compact self-contained "Send" page as a
-   data: URL. Scanning it opens that page directly on the
-   phone. It POSTs whatever you paste to ntfy.sh/<topic>,
-   and this main page receives it via SSE.
    ========================================================= */
 const PHONE = { topic: null, es: null };
 
@@ -874,7 +989,6 @@ function phoneGenTopic(){
   return t;
 }
 
-/* Compact sender page — every byte counts (it goes in the QR) */
 function phoneBuildTinyPage(topic){
   return '<meta charset=utf-8><meta name=viewport content="width=device-width,initial-scale=1">'
     + '<body style="font:16px system-ui;background:#111;color:#eee;padding:16px;margin:0">'
@@ -890,7 +1004,7 @@ function phoneBuildTinyPage(topic){
 
 function phoneBuildQrUrl(topic){
   const html = phoneBuildTinyPage(topic);
-  const b64  = btoa(unescape(encodeURIComponent(html)));  /* UTF-8 safe */
+  const b64  = btoa(unescape(encodeURIComponent(html)));
   return 'data:text/html;base64,' + b64;
 }
 
@@ -899,13 +1013,11 @@ function phoneRenderQr(){
   if (!box) return;
 
   if (!window.QRCode){
-    /* QR lib didn't load — show a text hint instead of a blank box */
     box.innerHTML = '<div class="qr-fallback">QR library failed to load.<br>'
       + 'Open <b>https://ntfy.sh/' + esc(PHONE.topic) + '</b> on your phone and POST a message.</div>';
     return;
   }
 
-  /* Rebuild the canvas fresh each time */
   box.innerHTML = '<canvas id="qrCanvas"></canvas>';
   const canvas = document.getElementById('qrCanvas');
   const url    = phoneBuildQrUrl(PHONE.topic);
@@ -913,7 +1025,7 @@ function phoneRenderQr(){
   QRCode.toCanvas(canvas, url, {
     width: 320,
     margin: 1,
-    errorCorrectionLevel: 'L',       /* L = highest capacity */
+    errorCorrectionLevel: 'L',
     color: { dark: '#0b0e14', light: '#ffffff' }
   }, err => {
     if (err){
@@ -937,7 +1049,6 @@ function phoneSetStatus(msg, kind){
 
 function phoneConnect(){
   phoneDisconnect();
-
   const sseUrl = 'https://ntfy.sh/' + PHONE.topic + '/sse';
   try {
     PHONE.es = new EventSource(sseUrl);
@@ -945,41 +1056,24 @@ function phoneConnect(){
     phoneSetStatus('Could not connect to relay', 'err');
     return;
   }
-
-  PHONE.es.onopen = () => {
-    phoneSetStatus('Connected — waiting for messages…', 'ok');
-  };
-
+  PHONE.es.onopen = () => phoneSetStatus('Connected — waiting for messages…', 'ok');
   PHONE.es.onmessage = ev => {
     let msg;
     try { msg = JSON.parse(ev.data); } catch(e){ return; }
     if (!msg || !msg.event) return;
-    if (msg.event === 'open'){
-      phoneSetStatus('Connected — waiting for messages…', 'ok');
-      return;
-    }
-    if (msg.event === 'message' && typeof msg.message === 'string'){
-      phoneHandleMessage(msg.message);
-    }
+    if (msg.event === 'open'){ phoneSetStatus('Connected — waiting for messages…', 'ok'); return; }
+    if (msg.event === 'message' && typeof msg.message === 'string') phoneHandleMessage(msg.message);
   };
-
-  PHONE.es.onerror = () => {
-    phoneSetStatus('Connection lost — retrying…', 'err');
-  };
+  PHONE.es.onerror = () => phoneSetStatus('Connection lost — retrying…', 'err');
 }
-
 function phoneDisconnect(){
   if (PHONE.es){ try { PHONE.es.close(); } catch(e){} PHONE.es = null; }
 }
 
 function phoneHandleMessage(raw){
   const text = String(raw || '').trim();
-  if (!text){
-    phoneSetStatus('Received empty message', 'err');
-    return;
-  }
+  if (!text){ phoneSetStatus('Received empty message', 'err'); return; }
 
-  /* Full M3U playlist pasted from phone */
   if (/#EXTM3U/i.test(text)){
     try {
       handlePlaylistText(text, undefined);
@@ -991,7 +1085,6 @@ function phoneHandleMessage(raw){
     return;
   }
 
-  /* One or more URLs, one per line */
   const lines = text.split(/\r?\n/).map(s => s.trim()).filter(Boolean);
   const urls  = lines.filter(l => /^https?:\/\//i.test(l));
 
@@ -1001,18 +1094,15 @@ function phoneHandleMessage(raw){
     return;
   }
 
-  /* Fallback: single URL with no scheme — try to be forgiving */
   if (!/\s/.test(text)){
     const u = /^https?:\/\//i.test(text) ? text : 'http://' + text;
     addTile({ url: u, type: detectType(u), title: guessTitle(u) });
     phoneSetStatus('Received link from phone ✓', 'ok');
     return;
   }
-
   phoneSetStatus('Received text (no URL detected)', 'err');
 }
 
-/* --- Phone UI wiring --- */
 document.getElementById('btnNewTopic').onclick = () => {
   PHONE.topic = phoneGenTopic();
   try { localStorage.setItem('multiplay-topic', PHONE.topic); } catch(e){}
@@ -1039,15 +1129,10 @@ document.getElementById('btnCopyTopic').onclick = async () => {
   }
   document.getElementById('remoteTopic').textContent = PHONE.topic;
 
-  /* Wait for the QR library if the CDN is still loading */
   let waited = 0;
   const tryQr = () => {
-    if (window.QRCode || waited > 5000){
-      phoneRenderQr();
-    } else {
-      waited += 200;
-      setTimeout(tryQr, 200);
-    }
+    if (window.QRCode || waited > 5000) phoneRenderQr();
+    else { waited += 200; setTimeout(tryQr, 200); }
   };
   tryQr();
 
