@@ -1,0 +1,1154 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MultiPlay — M3U &amp; Web Multiscreen Player</title>
+<script src="https://cdn.jsdelivr.net/npm/hls.js@1.5.13/dist/hls.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.3/build/qrcode.min.js"></script>
+<style>
+  :root{
+    --bg:#0b0e14; --panel:#111722; --panel2:#1b2230; --border:#232c3d;
+    --text:#e6ebf5; --muted:#8b98ad; --accent:#4c8dff; --danger:#ff5a5a;
+  }
+  *{box-sizing:border-box}
+  html,body{height:100%;margin:0}
+  body{
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    background:var(--bg);color:var(--text);overflow:hidden;font-size:14px;
+  }
+  button{font-family:inherit}
+  code{background:#0d121b;padding:1px 5px;border-radius:4px;font-size:11.5px;color:#9fb6e0}
+
+  .app{display:flex;flex-direction:column;height:100vh;position:relative}
+
+  /* ---------- top bar ---------- */
+  .topbar{
+    display:flex;align-items:center;gap:10px;padding:0 12px;height:52px;
+    background:var(--panel);border-bottom:1px solid var(--border);flex:0 0 auto;z-index:30;
+  }
+  .brand{font-weight:700;letter-spacing:.3px;white-space:nowrap;display:flex;align-items:center;gap:8px}
+  .brand .dot{width:10px;height:10px;border-radius:50%;background:var(--accent);box-shadow:0 0 10px var(--accent)}
+  .layouts{display:flex;gap:4px;margin-left:8px;flex-wrap:wrap;overflow:hidden}
+  .lay{
+    background:var(--panel2);border:1px solid var(--border);color:var(--muted);
+    padding:5px 9px;border-radius:6px;cursor:pointer;font-size:12px;transition:.12s;
+  }
+  .lay:hover{border-color:#3a4763;color:var(--text)}
+  .lay.active{background:var(--accent);border-color:var(--accent);color:#fff}
+  .spacer{flex:1}
+  .tbtn{
+    background:var(--panel2);border:1px solid var(--border);color:#c8d3e6;
+    padding:6px 10px;border-radius:6px;cursor:pointer;font-size:12px;white-space:nowrap;
+  }
+  .tbtn:hover{background:#222c3d}
+  .tbtn.danger:hover{background:#5a1f1f;border-color:#7a2a2a;color:#ffb3b3}
+
+  /* ---------- body ---------- */
+  .body{flex:1;display:flex;min-height:0}
+
+  .sidebar{
+    width:352px;flex:0 0 352px;background:var(--panel);border-right:1px solid var(--border);
+    display:flex;flex-direction:column;min-height:0;transition:margin-left .18s ease;
+  }
+  .sidebar.collapsed{margin-left:-352px}
+
+  .tabs{display:flex;border-bottom:1px solid var(--border);flex:0 0 auto}
+  .tab{
+    flex:1;padding:11px 4px;text-align:center;font-size:12px;color:var(--muted);
+    cursor:pointer;border-bottom:2px solid transparent;user-select:none;transition:.12s;
+  }
+  .tab:hover{color:var(--text)}
+  .tab.active{color:var(--accent);border-bottom-color:var(--accent);background:#151c28}
+
+  .tabpanes{flex:1;min-height:0;display:flex;flex-direction:column}
+  .pane{display:none;flex-direction:column;gap:11px;flex:1;min-height:0;padding:14px;overflow:hidden}
+  .pane.active{display:flex}
+  .pane[data-pane="add"],.pane[data-pane="set"],.pane[data-pane="phone"]{overflow-y:auto}
+
+  label{font-size:11px;text-transform:uppercase;letter-spacing:.6px;color:var(--muted);display:block;margin-bottom:5px;font-weight:700}
+  input[type=text],select,textarea{
+    width:100%;background:#0d121b;border:1px solid var(--border);color:var(--text);
+    padding:9px 10px;border-radius:7px;font-size:13px;outline:none;font-family:inherit;
+  }
+  input:focus,select:focus,textarea:focus{border-color:var(--accent)}
+  textarea{resize:vertical;min-height:84px;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:11.5px;line-height:1.5}
+  .btn{
+    background:var(--accent);border:none;color:#fff;padding:10px;border-radius:7px;
+    cursor:pointer;font-weight:600;font-size:13px;width:100%;transition:.12s;
+  }
+  .btn:hover{background:#3d7ce8}
+  .btn.ghost{background:var(--panel2);border:1px solid var(--border);color:#c8d3e6}
+  .btn.ghost:hover{background:#222c3d}
+  .hint{font-size:11.5px;color:#5f6d85;line-height:1.55;margin:2px 0 0}
+  .status{font-size:11.5px;color:var(--muted);min-height:14px;line-height:1.4}
+  .status.err{color:#ff8a8a}
+  .status.ok{color:#4ade80}
+
+  .check{display:flex;align-items:center;gap:9px;font-size:12.5px;color:#c8d3e6;text-transform:none;letter-spacing:0;font-weight:400;margin:0;cursor:pointer}
+  .check input{width:16px;height:16px;accent-color:var(--accent);cursor:pointer}
+
+  /* ---------- paste button ---------- */
+  .input-row{display:flex;gap:6px;align-items:center}
+  .input-row input{flex:1}
+  .input-row.textarea-row{align-items:stretch}
+  .input-row.textarea-row textarea{flex:1}
+  .paste-btn{
+    background:var(--panel2);border:1px solid var(--border);color:var(--muted);
+    padding:0 10px;height:36px;border-radius:7px;cursor:pointer;
+    font-size:16px;line-height:1;display:grid;place-items:center;
+    flex:0 0 auto;transition:.12s;
+  }
+  .paste-btn:hover{background:var(--accent);border-color:var(--accent);color:#fff}
+  .paste-btn.textarea-btn{height:auto;min-height:36px}
+
+  /* ---------- QR / phone remote ---------- */
+  .qr-box{
+    background:#fff;padding:12px;border-radius:12px;
+    display:flex;justify-content:center;align-items:center;
+    box-shadow:0 6px 24px rgba(0,0,0,.35);
+  }
+  .qr-box canvas{display:block;border-radius:6px;max-width:100%;height:auto}
+  .qr-wrap{display:flex;flex-direction:column;gap:10px}
+  .topic-chip{
+    display:flex;align-items:center;gap:6px;background:#0d121b;border:1px solid var(--border);
+    padding:6px 10px;border-radius:7px;font-family:ui-monospace,Menlo,Consolas,monospace;
+    font-size:12px;color:#9fb6e0;
+  }
+  .topic-chip span{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .topic-chip button{
+    background:transparent;border:0;color:#8b98ad;cursor:pointer;font-size:14px;padding:2px 4px;border-radius:4px;
+  }
+  .topic-chip button:hover{color:#fff;background:var(--panel2)}
+
+  .steps{
+    font-size:12px;color:#8b98ad;line-height:1.7;padding-left:18px;margin:2px 0 0;
+  }
+  .steps li{margin-bottom:2px}
+  .steps b{color:#c8d3e6}
+  .live-dot{
+    display:inline-block;width:8px;height:8px;border-radius:50%;
+    background:#4ade80;box-shadow:0 0 8px #4ade80;margin-right:6px;
+    animation:pulse 1.6s infinite;
+  }
+  .live-dot.off{background:#ff5a5a;box-shadow:0 0 8px #ff5a5a;animation:none}
+  @keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
+
+  /* ---------- channel list ---------- */
+  .chan-list{display:flex;flex-direction:column;gap:3px;overflow-y:auto;flex:1;min-height:0;margin:0 -4px;padding:0 4px}
+  .chan{
+    display:flex;align-items:center;gap:9px;padding:5px 7px;border-radius:7px;
+    cursor:pointer;border:1px solid transparent;transition:.1s;
+  }
+  .chan:hover{background:#182031;border-color:#243046}
+  .chan-logo{
+    width:34px;height:34px;flex:0 0 auto;border-radius:5px;background:#0d121b;
+    display:grid;place-items:center;font-size:15px;overflow:hidden;
+  }
+  .chan-logo img{width:100%;height:100%;object-fit:contain}
+  .chan-info{flex:1;min-width:0}
+  .chan-name{font-size:12.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .chan-group{font-size:10.5px;color:#6d7a90;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .chan-add{
+    background:transparent;border:1px solid var(--border);color:var(--muted);
+    width:26px;height:26px;border-radius:6px;cursor:pointer;font-size:14px;line-height:1;flex:0 0 auto;
+  }
+  .chan:hover .chan-add{color:#fff;border-color:var(--accent);background:var(--accent)}
+
+  /* ---------- stage ---------- */
+  .stage{flex:1;position:relative;min-width:0;background:#000}
+  .grid{
+    position:absolute;inset:0;display:grid;gap:3px;padding:3px;
+    grid-auto-rows:minmax(0,1fr);
+  }
+  .tile{
+    position:relative;background:#000;border:1px solid #1c2432;border-radius:6px;
+    overflow:hidden;display:flex;flex-direction:column;min-width:0;min-height:0;
+  }
+  .tile:fullscreen{border-radius:0;border:none}
+  .tile-media{flex:1;position:relative;min-height:0;background:#000}
+  .tile-media video,.tile-media iframe{
+    position:absolute;inset:0;width:100%;height:100%;border:0;display:block;background:#000;
+  }
+
+  .tile-head{
+    position:absolute;top:0;left:0;right:0;z-index:6;display:flex;align-items:center;gap:5px;
+    padding:6px 8px;background:linear-gradient(180deg,rgba(0,0,0,.85),rgba(0,0,0,0));
+    opacity:0;transition:opacity .15s;pointer-events:none;
+  }
+  .tile:hover .tile-head{opacity:1;pointer-events:auto}
+  .tile-title{
+    flex:1;font-size:11.5px;color:#dfe7f5;white-space:nowrap;overflow:hidden;
+    text-overflow:ellipsis;text-shadow:0 1px 3px #000;padding-right:4px;
+  }
+  .tbtn-i{
+    background:rgba(20,25,34,.82);border:1px solid rgba(255,255,255,.12);color:#dfe7f5;
+    width:26px;height:26px;border-radius:6px;cursor:pointer;display:grid;place-items:center;
+    font-size:12px;padding:0;flex:0 0 auto;transition:.12s;
+  }
+  .tbtn-i:hover{background:var(--accent);border-color:var(--accent)}
+
+  .tile-err{
+    position:absolute;inset:0;display:none;flex-direction:column;align-items:center;justify-content:center;
+    gap:10px;background:rgba(10,12,18,.92);color:#ffb3b3;text-align:center;padding:18px;z-index:5;font-size:12px;line-height:1.5;
+  }
+  .tile-err.show{display:flex}
+
+  .empty{
+    position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;
+    gap:10px;color:#4a566b;text-align:center;padding:24px;pointer-events:none;
+  }
+  .empty h2{margin:0;font-size:19px;color:#5f6d85;font-weight:600}
+  .empty p{margin:0;font-size:13px;max-width:430px;line-height:1.6}
+
+  /* ---------- mobile ---------- */
+  @media (max-width:820px){
+    .sidebar{position:absolute;top:0;bottom:0;left:0;z-index:25;width:88%;flex-basis:88%;
+      box-shadow:0 0 40px rgba(0,0,0,.6)}
+    .sidebar.collapsed{margin-left:-100%}
+    .brand span:last-child{display:none}
+    .layouts{margin-left:0}
+    .topbar{overflow-x:auto;overflow-y:hidden}
+  }
+  ::-webkit-scrollbar{width:9px;height:9px}
+  ::-webkit-scrollbar-track{background:transparent}
+  ::-webkit-scrollbar-thumb{background:#2a3548;border-radius:5px}
+  ::-webkit-scrollbar-thumb:hover{background:#3a4763}
+</style>
+</head>
+<body>
+
+<div class="app">
+
+  <header class="topbar">
+    <div class="brand"><span class="dot"></span><span>MultiPlay</span></div>
+    <div class="layouts" id="layouts"></div>
+    <div class="spacer"></div>
+    <button class="tbtn" id="btnMuteAll">🔇 Mute all</button>
+    <button class="tbtn danger" id="btnCloseAll">✕ Close all</button>
+    <button class="tbtn" id="btnToggleSidebar">☰</button>
+  </header>
+
+  <div class="body">
+
+    <aside class="sidebar" id="sidebar">
+
+      <div class="tabs">
+        <div class="tab active" data-tab="add">Add Source</div>
+        <div class="tab" data-tab="m3u">M3U</div>
+        <div class="tab" data-tab="phone">📱 Phone</div>
+        <div class="tab" data-tab="set">Settings</div>
+      </div>
+
+      <div class="tabpanes">
+
+        <!-- ============ ADD SOURCE ============ -->
+        <section class="pane active" data-pane="add">
+          <div>
+            <label>URL / Stream / Website</label>
+            <div class="input-row">
+              <input type="text" id="srcUrl" placeholder="https://example.com/stream.m3u8">
+              <button class="paste-btn" data-paste="srcUrl" title="Paste from clipboard">📋</button>
+            </div>
+          </div>
+          <div>
+            <label>Type</label>
+            <select id="srcType">
+              <option value="auto">Auto-detect</option>
+              <option value="hls">HLS / M3U8 stream</option>
+              <option value="video">Direct video file</option>
+              <option value="iframe">Website embed (iframe)</option>
+            </select>
+          </div>
+          <div>
+            <label>Title (optional)</label>
+            <input type="text" id="srcTitle" placeholder="My channel">
+          </div>
+          <button class="btn" id="btnAdd">＋ Add to screen</button>
+          <button class="btn ghost" id="btnDemo">▶ Load demo stream</button>
+          <p class="hint">
+            Websites sending <code>X-Frame-Options: DENY</code> (Google, YouTube, Facebook…) cannot be
+            embedded — use a direct video/stream URL for those.
+          </p>
+        </section>
+
+        <!-- ============ M3U ============ -->
+        <section class="pane" data-pane="m3u">
+          <div>
+            <label>Playlist URL (.m3u / .m3u8)</label>
+            <div class="input-row">
+              <input type="text" id="plUrl" placeholder="https://example.com/playlist.m3u">
+              <button class="paste-btn" data-paste="plUrl" title="Paste from clipboard">📋</button>
+            </div>
+          </div>
+          <button class="btn" id="btnLoadPl">Load playlist</button>
+          <div>
+            <label>…or paste playlist text</label>
+            <div class="input-row textarea-row">
+              <textarea id="plText" placeholder="#EXTM3U
+#EXTINF:-1 tvg-logo=&quot;...&quot; group-title=&quot;News&quot;,Channel One
+http://server/stream1/index.m3u8"></textarea>
+              <button class="paste-btn textarea-btn" data-paste="plText" title="Paste from clipboard">📋</button>
+            </div>
+          </div>
+          <button class="btn ghost" id="btnParsePl">Parse pasted text</button>
+          <div class="status" id="plStatus"></div>
+          <div>
+            <input type="text" id="plSearch" placeholder="Search channels…">
+          </div>
+          <div class="chan-list" id="chanList"></div>
+        </section>
+
+        <!-- ============ PHONE REMOTE ============ -->
+        <section class="pane" data-pane="phone">
+          <div>
+            <label>Scan this QR with your phone</label>
+            <div class="qr-box"><canvas id="qrCanvas"></canvas></div>
+            <p class="hint" style="text-align:center">
+              Opens a tiny "send link" page on your phone — no app needed.
+            </p>
+          </div>
+
+          <div class="qr-wrap">
+            <div class="status" id="remoteStatus">
+              <span class="live-dot off"></span>Connecting…
+            </div>
+            <div class="topic-chip">
+              <span id="remoteTopic">…</span>
+              <button id="btnCopyTopic" title="Copy topic">📋</button>
+            </div>
+          </div>
+
+          <ol class="steps">
+            <li>Scan the QR with your phone camera.</li>
+            <li>Paste a <b>stream URL</b>, <b>website URL</b>, or a whole <b>M3U playlist</b>.</li>
+            <li>Tap <b>Send</b> — it appears here instantly.</li>
+          </ol>
+
+          <button class="btn ghost" id="btnNewTopic">🔄 New topic</button>
+          <p class="hint">
+            Uses the free public relay <code>ntfy.sh</code> with a random topic ID. No account needed.
+          </p>
+        </section>
+
+        <!-- ============ SETTINGS ============ -->
+        <section class="pane" data-pane="set">
+          <div>
+            <label>CORS proxy (optional)</label>
+            <div class="input-row">
+              <input type="text" id="setProxy" placeholder="https://corsproxy.io/?{url}">
+              <button class="paste-btn" data-paste="setProxy" title="Paste from clipboard">📋</button>
+            </div>
+            <p class="hint">
+              Used to fetch playlists and segments when the server blocks cross-origin requests.
+              Use <code>{url}</code> as the placeholder — otherwise the URL is appended.
+            </p>
+          </div>
+          <label class="check">
+            <input type="checkbox" id="setExclusive" checked>
+            Exclusive audio — unmuting a tile mutes the others
+          </label>
+          <p class="hint">
+            A browser can only autoplay muted video. Click the 🔊 button on a tile to enable its sound.
+          </p>
+          <button class="btn ghost" id="btnReset">Reset settings</button>
+        </section>
+
+      </div>
+    </aside>
+
+    <main class="stage">
+      <div class="grid" id="grid"></div>
+      <div class="empty" id="empty">
+        <h2>Nothing playing yet</h2>
+        <p>Add an M3U8 stream, a direct video URL or any website on the left.
+           Open several at once to build a multiscreen wall.</p>
+      </div>
+    </main>
+
+  </div>
+</div>
+
+<script>
+/* =========================================================
+   Helpers
+   ========================================================= */
+const $  = (s, r = document) => r.querySelector(s);
+const $$ = (s, r = document) => Array.from(r.querySelectorAll(s));
+const esc = s => String(s ?? '').replace(/[&<>"']/g,
+  c => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[c]));
+
+/* =========================================================
+   State
+   ========================================================= */
+const state = {
+  tiles: [],
+  channels: [],
+  layout: 'auto',
+  seq: 0,
+  settings: { proxy: '', exclusive: true }
+};
+
+const grid    = $('#grid');
+const emptyEl = $('#empty');
+
+/* =========================================================
+   Grid layouts
+   ========================================================= */
+const LAYOUTS = [
+  { id:'1x1',  label:'1',    cols:1, rows:1 },
+  { id:'2x1',  label:'2 ▥',  cols:2, rows:1 },
+  { id:'1x2',  label:'2 ▤',  cols:1, rows:2 },
+  { id:'2x2',  label:'4',    cols:2, rows:2 },
+  { id:'3x2',  label:'6',    cols:3, rows:2 },
+  { id:'3x3',  label:'9',    cols:3, rows:3 },
+  { id:'4x3',  label:'12',   cols:4, rows:3 },
+  { id:'auto', label:'Auto', cols:0, rows:0 }
+];
+
+function buildLayoutButtons(){
+  const wrap = $('#layouts');
+  wrap.innerHTML = '';
+  LAYOUTS.forEach(l => {
+    const b = document.createElement('button');
+    b.className = 'lay' + (l.id === state.layout ? ' active' : '');
+    b.textContent = l.label;
+    b.title = l.id === 'auto' ? 'Automatic grid' : `${l.cols} × ${l.rows}`;
+    b.dataset.id = l.id;
+    b.onclick = () => {
+      state.layout = l.id;
+      $$('.lay').forEach(x => x.classList.toggle('active', x.dataset.id === l.id));
+      applyLayout();
+    };
+    wrap.appendChild(b);
+  });
+}
+
+function applyLayout(){
+  const n = state.tiles.length || 1;
+  let cols, rows;
+
+  if (state.layout === 'auto'){
+    cols = Math.ceil(Math.sqrt(n));
+    rows = Math.ceil(n / cols);
+  } else {
+    const l = LAYOUTS.find(x => x.id === state.layout);
+    cols = l.cols;
+    rows = l.rows;
+  }
+  grid.style.gridTemplateColumns = `repeat(${cols}, minmax(0,1fr))`;
+  grid.style.gridTemplateRows    = `repeat(${rows}, minmax(0,1fr))`;
+}
+
+function syncUI(){
+  emptyEl.style.display = state.tiles.length ? 'none' : 'flex';
+  applyLayout();
+}
+
+/* =========================================================
+   URL helpers
+   ========================================================= */
+function detectType(url){
+  if (/\.m3u8(\?|#|$)/i.test(url)) return 'hls';
+  if (/\.(mp4|m4v|webm|ogv|ogg|mov|mkv|mp3|aac|flac|wav)(\?|#|$)/i.test(url)) return 'video';
+  return 'iframe';
+}
+
+function guessTitle(url){
+  try {
+    const u = new URL(url);
+    const last = u.pathname.split('/').filter(Boolean).pop() || u.hostname;
+    return decodeURIComponent(last).slice(0, 60);
+  } catch { return String(url).slice(0, 40); }
+}
+
+function proxify(url){
+  const p = state.settings.proxy.trim();
+  if (!p) return url;
+  return p.includes('{url}') ? p.replace('{url}', encodeURIComponent(url)) : p + url;
+}
+
+async function fetchText(url){
+  const res = await fetch(proxify(url), { redirect: 'follow' });
+  if (!res.ok) throw new Error('HTTP ' + res.status);
+  return await res.text();
+}
+
+/* =========================================================
+   Tiles
+   ========================================================= */
+function addTile(src){
+  if (!src || !src.url) return;
+
+  const tile = {
+    id: ++state.seq,
+    type: src.type || detectType(src.url),
+    url: src.url,
+    title: src.title || guessTitle(src.url),
+    muted: state.tiles.length > 0,
+    hls: null,
+    video: null,
+    iframe: null,
+    el: null,
+    muteBtn: null
+  };
+
+  const el = document.createElement('div');
+  el.className = 'tile';
+  el.dataset.id = tile.id;
+  el.innerHTML = `
+    <div class="tile-head">
+      <span class="tile-title"></span>
+      <button class="tbtn-i" data-act="mute"   title="Mute / Unmute">🔇</button>
+      <button class="tbtn-i" data-act="reload" title="Reload">⟳</button>
+      <button class="tbtn-i" data-act="full"   title="Fullscreen">⛶</button>
+      <button class="tbtn-i" data-act="close"  title="Close">✕</button>
+    </div>
+    <div class="tile-media"></div>
+    <div class="tile-err">
+      <div class="msg"></div>
+      <button class="btn ghost" data-act="reload" style="width:auto;padding:6px 14px">Retry</button>
+    </div>`;
+
+  el.querySelector('.tile-title').textContent = tile.title;
+  tile.el      = el;
+  tile.muteBtn = el.querySelector('[data-act="mute"]');
+
+  if (tile.type === 'iframe') tile.muteBtn.style.display = 'none';
+
+  el.querySelector('.tile-head').addEventListener('click', e => {
+    const btn = e.target.closest('button');
+    if (!btn) return;
+    const act = btn.dataset.act;
+    if (act === 'mute')   toggleMute(tile);
+    if (act === 'reload') mountMedia(tile);
+    if (act === 'full')   toggleFullscreen(tile);
+    if (act === 'close')  removeTile(tile);
+  });
+
+  el.querySelector('.tile-err').addEventListener('click', e => {
+    if (e.target.dataset.act === 'reload') mountMedia(tile);
+  });
+
+  state.tiles.push(tile);
+  grid.appendChild(el);
+  mountMedia(tile);
+  syncUI();
+}
+
+function removeTile(tile){
+  if (tile.hls) { try { tile.hls.destroy(); } catch(e){} }
+  if (tile.video){
+    try { tile.video.pause(); tile.video.removeAttribute('src'); tile.video.load(); } catch(e){}
+  }
+  tile.el.remove();
+  state.tiles = state.tiles.filter(t => t !== tile);
+  syncUI();
+}
+
+function toggleFullscreen(tile){
+  if (document.fullscreenElement) document.exitFullscreen();
+  else if (tile.el.requestFullscreen) tile.el.requestFullscreen().catch(()=>{});
+}
+
+function updateMuteIcon(tile){
+  if (!tile.muteBtn) return;
+  const muted = !tile.video || tile.video.muted;
+  tile.muteBtn.textContent = muted ? '🔇' : '🔊';
+}
+
+function toggleMute(tile){
+  if (!tile.video) return;
+  const willUnmute = tile.video.muted;
+
+  if (willUnmute && state.settings.exclusive){
+    state.tiles.forEach(t => {
+      if (t !== tile && t.video){ t.video.muted = true; updateMuteIcon(t); }
+    });
+  }
+  tile.video.muted = !willUnmute;
+  updateMuteIcon(tile);
+  if (!tile.video.muted) tile.video.play().catch(()=>{});
+}
+
+function showTileError(tile, msg){
+  const box = tile.el.querySelector('.tile-err');
+  box.querySelector('.msg').textContent = msg;
+  box.classList.add('show');
+}
+
+function hideTileError(tile){
+  tile.el.querySelector('.tile-err').classList.remove('show');
+}
+
+/* =========================================================
+   Media mounting
+   ========================================================= */
+function mountMedia(tile){
+  const holder = tile.el.querySelector('.tile-media');
+  hideTileError(tile);
+
+  if (tile.hls) { try { tile.hls.destroy(); } catch(e){} tile.hls = null; }
+  if (tile.video){ try { tile.video.pause(); } catch(e){} tile.video = null; }
+  if (tile.iframe){ tile.iframe = null; }
+  holder.innerHTML = '';
+
+  if (tile.type === 'iframe'){
+    const f = document.createElement('iframe');
+    f.src = tile.url;
+    f.setAttribute('allow', 'autoplay; fullscreen; encrypted-media; picture-in-picture; clipboard-write');
+    f.setAttribute('allowfullscreen', '');
+    f.setAttribute('referrerpolicy', 'no-referrer');
+    holder.appendChild(f);
+    tile.iframe = f;
+    return;
+  }
+
+  const video = document.createElement('video');
+  video.controls = true;
+  video.autoplay = true;
+  video.playsInline = true;
+  video.setAttribute('playsinline', '');
+  video.muted = tile.muted;
+  holder.appendChild(video);
+  tile.video = video;
+  updateMuteIcon(tile);
+
+  const url   = tile.url;
+  const isHls = tile.type === 'hls' || /\.m3u8(\?|#|$)/i.test(url);
+
+  const tryPlay = () => {
+    const p = video.play();
+    if (p && p.catch){
+      p.catch(() => {
+        video.muted = true;
+        tile.muted = true;
+        updateMuteIcon(tile);
+        video.play().catch(()=>{});
+      });
+    }
+  };
+
+  if (isHls && window.Hls && window.Hls.isSupported()){
+    const cfg = {
+      enableWorker: true,
+      lowLatencyMode: true,
+      backBufferLength: 30,
+      manifestLoadingMaxRetry: 3,
+      levelLoadingMaxRetry: 3,
+      fragLoadingMaxRetry: 4
+    };
+
+    if (state.settings.proxy.trim()){
+      cfg.xhrSetup = (xhr, reqUrl) => {
+        try { xhr.open('GET', proxify(reqUrl), true); } catch(e){}
+      };
+    }
+
+    const hls = new Hls(cfg);
+    hls.loadSource(url);
+    hls.attachMedia(video);
+
+    hls.on(Hls.Events.MANIFEST_PARSED, () => tryPlay());
+
+    hls.on(Hls.Events.ERROR, (evt, data) => {
+      if (!data.fatal) return;
+      if (data.type === Hls.ErrorTypes.NETWORK_ERROR){
+        hls.startLoad();
+      } else if (data.type === Hls.ErrorTypes.MEDIA_ERROR){
+        hls.recoverMediaError();
+      } else {
+        showTileError(tile, 'Playback error: ' + (data.details || 'unknown'));
+        try { hls.destroy(); } catch(e){}
+      }
+    });
+
+    tile.hls = hls;
+
+  } else if (isHls && video.canPlayType('application/vnd.apple.mpegurl')){
+    video.src = url;
+    tryPlay();
+  } else {
+    video.src = url;
+    tryPlay();
+  }
+
+  video.addEventListener('error', () => {
+    showTileError(tile, 'Failed to load media. The URL may be offline, blocked, or not a supported format.');
+  });
+
+  video.addEventListener('volumechange', () => updateMuteIcon(tile));
+}
+
+/* =========================================================
+   M3U parsing
+   ========================================================= */
+function parseM3U(text, baseUrl){
+  const out = [];
+  const lines = text.split(/\r?\n/);
+  let cur = null;
+
+  const resolve = u => { try { return new URL(u, baseUrl).href; } catch { return u; } };
+
+  for (const raw of lines){
+    const line = raw.trim();
+    if (!line) continue;
+
+    if (/^#EXTINF/i.test(line)){
+      const name = line.slice(line.lastIndexOf(',') + 1).trim();
+      const info = { name: name || 'Unknown', url: '', logo: '', group: '' };
+      const re = /([a-zA-Z0-9_-]+)="([^"]*)"/g;
+      let m;
+      while ((m = re.exec(line))) info[m[1].toLowerCase()] = m[2];
+      info.logo  = info['tvg-logo']    || info.logo  || '';
+      info.group = info['group-title'] || info.group || '';
+      cur = info;
+    }
+    else if (line.startsWith('#')){ /* ignore */ }
+    else {
+      const url = resolve(line);
+      if (cur){ cur.url = url; out.push(cur); cur = null; }
+      else {
+        const nm = url.split('/').pop().split('?')[0] || url;
+        out.push({ name: nm, url, logo: '', group: '' });
+      }
+    }
+  }
+  return out;
+}
+
+function handlePlaylistText(text, baseUrl){
+  if (!/#EXTM3U/i.test(text)){
+    setStatus('Not a valid M3U file (missing #EXTM3U).', true);
+    return;
+  }
+
+  if (/#EXT-X-(TARGETDURATION|STREAM-INF|MEDIA-SEQUENCE|PLAYLIST-TYPE)/i.test(text)){
+    addTile({ type:'hls', url: baseUrl, title: guessTitle(baseUrl) });
+    setStatus('Detected a media playlist — added as a live stream.');
+    return;
+  }
+
+  const items = parseM3U(text, baseUrl);
+  if (!items.length){ setStatus('No channels found in this playlist.', true); return; }
+
+  state.channels = items;
+  renderChannels();
+  setStatus(`Loaded ${items.length} channel${items.length === 1 ? '' : 's'}. Click one to open it.`);
+}
+
+function renderChannels(){
+  const q    = $('#plSearch').value.trim().toLowerCase();
+  const list = $('#chanList');
+  list.innerHTML = '';
+
+  const items = state.channels.filter(c =>
+    !q ||
+    c.name.toLowerCase().includes(q) ||
+    (c.group || '').toLowerCase().includes(q)
+  );
+
+  if (!items.length){
+    list.innerHTML = `<div class="status" style="padding:8px 4px">${
+      state.channels.length ? 'No matching channels.' : 'No channels loaded yet.'
+    }</div>`;
+    return;
+  }
+
+  const frag = document.createDocumentFragment();
+
+  items.slice(0, 2000).forEach(c => {
+    const row = document.createElement('div');
+    row.className = 'chan';
+    row.innerHTML = `
+      <div class="chan-logo"></div>
+      <div class="chan-info">
+        <div class="chan-name">${esc(c.name)}</div>
+        <div class="chan-group">${esc(c.group || '')}</div>
+      </div>
+      <button class="chan-add" title="Add to screen">＋</button>`;
+
+    const logoBox = row.querySelector('.chan-logo');
+    if (c.logo){
+      const img = document.createElement('img');
+      img.alt = '';
+      img.onerror = () => { img.remove(); logoBox.textContent = '📺'; };
+      img.src = c.logo;
+      logoBox.appendChild(img);
+    } else {
+      logoBox.textContent = '📺';
+    }
+
+    row.onclick = () => {
+      const isFile = /\.(mp4|m4v|webm|mov|mkv)(\?|#|$)/i.test(c.url);
+      addTile({ type: isFile ? 'video' : 'hls', url: c.url, title: c.name });
+    };
+
+    frag.appendChild(row);
+  });
+
+  list.appendChild(frag);
+}
+
+/* =========================================================
+   Status / tabs
+   ========================================================= */
+function setStatus(msg, isErr){
+  const el = $('#plStatus');
+  el.textContent = msg;
+  el.className = 'status' + (isErr ? ' err' : '');
+}
+
+function switchTab(name){
+  $$('.tab').forEach(t => t.classList.toggle('active', t.dataset.tab === name));
+  $$('.pane').forEach(p => p.classList.toggle('active', p.dataset.pane === name));
+}
+
+/* =========================================================
+   UI wiring
+   ========================================================= */
+$$('.tab').forEach(t => t.onclick = () => switchTab(t.dataset.tab));
+
+/* --- Add source --- */
+$('#btnAdd').onclick = async () => {
+  const url = $('#srcUrl').value.trim();
+  if (!url){ $('#srcUrl').focus(); return; }
+
+  const type  = $('#srcType').value;
+  const title = $('#srcTitle').value.trim();
+
+  if (/\.m3u(\?|#|$)/i.test(url) && !/\.m3u8/i.test(url)){
+    switchTab('m3u');
+    $('#plUrl').value = url;
+    await loadPlaylistFromUrl();
+    return;
+  }
+
+  addTile({ type: type === 'auto' ? detectType(url) : type, url, title });
+  $('#srcUrl').value = '';
+  $('#srcTitle').value = '';
+};
+
+$('#srcUrl').addEventListener('keydown', e => {
+  if (e.key === 'Enter') $('#btnAdd').click();
+});
+
+$('#btnDemo').onclick = () => {
+  addTile({
+    type: 'hls',
+    url: 'https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8',
+    title: 'Demo — Big Buck Bunny'
+  });
+};
+
+/* --- Playlist --- */
+async function loadPlaylistFromUrl(){
+  const url = $('#plUrl').value.trim();
+  if (!url){ $('#plUrl').focus(); return; }
+
+  setStatus('Loading playlist…');
+  try {
+    const text = await fetchText(url);
+    handlePlaylistText(text, url);
+  } catch (err){
+    setStatus('Could not load: ' + err.message +
+      ' — try a CORS proxy in Settings, or paste the playlist text below.', true);
+  }
+}
+
+$('#btnLoadPl').onclick = loadPlaylistFromUrl;
+$('#plUrl').addEventListener('keydown', e => { if (e.key === 'Enter') loadPlaylistFromUrl(); });
+
+$('#btnParsePl').onclick = () => {
+  const text = $('#plText').value.trim();
+  if (!text){ setStatus('Nothing to parse — paste a playlist first.', true); return; }
+  handlePlaylistText(text, $('#plUrl').value.trim() || undefined);
+};
+
+$('#plSearch').addEventListener('input', renderChannels);
+
+/* --- Global buttons --- */
+$('#btnCloseAll').onclick = () => { [...state.tiles].forEach(removeTile); };
+
+$('#btnMuteAll').onclick = () => {
+  state.tiles.forEach(t => {
+    if (t.video){ t.video.muted = true; updateMuteIcon(t); }
+  });
+};
+
+$('#btnToggleSidebar').onclick = () => {
+  $('#sidebar').classList.toggle('collapsed');
+};
+
+/* --- Settings --- */
+$('#setProxy').addEventListener('input', e => {
+  state.settings.proxy = e.target.value;
+  saveSettings();
+});
+
+$('#setExclusive').addEventListener('change', e => {
+  state.settings.exclusive = e.target.checked;
+  saveSettings();
+});
+
+$('#btnReset').onclick = () => {
+  state.settings = { proxy: '', exclusive: true };
+  $('#setProxy').value = '';
+  $('#setExclusive').checked = true;
+  saveSettings();
+  setStatus('');
+};
+
+function saveSettings(){
+  try { localStorage.setItem('multiplay', JSON.stringify(state.settings)); } catch(e){}
+}
+
+function loadSettings(){
+  try {
+    const s = JSON.parse(localStorage.getItem('multiplay') || '{}');
+    if (typeof s.proxy === 'string')   state.settings.proxy = s.proxy;
+    if (typeof s.exclusive === 'boolean') state.settings.exclusive = s.exclusive;
+  } catch(e){}
+  $('#setProxy').value = state.settings.proxy;
+  $('#setExclusive').checked = state.settings.exclusive;
+}
+
+/* =========================================================
+   Clipboard paste helpers
+   ========================================================= */
+async function pasteFromClipboard(targetId) {
+  const el = document.getElementById(targetId);
+  if (!el) return;
+
+  try {
+    const text = await navigator.clipboard.readText();
+    if (!text) return;
+
+    if (el.tagName === 'TEXTAREA') {
+      const start = el.selectionStart;
+      const end = el.selectionEnd;
+      el.value = el.value.slice(0, start) + text + el.value.slice(end);
+      el.selectionStart = el.selectionEnd = start + text.length;
+    } else {
+      el.value = text;
+    }
+
+    el.dispatchEvent(new Event('input', { bubbles: true }));
+    el.focus();
+  } catch (err) {
+    alert('Could not read clipboard. Please long‑press the field and paste manually.');
+  }
+}
+
+document.querySelectorAll('.paste-btn[data-paste]').forEach(btn => {
+  btn.addEventListener('click', () => {
+    const targetId = btn.dataset.paste;
+    if (targetId) pasteFromClipboard(targetId);
+  });
+});
+
+/* =========================================================
+   Phone Remote — QR + ntfy.sh relay
+   =========================================================
+   Flow:
+     - Main page generates a random topic (e.g. multiplay-a1b2c3...)
+     - QR encodes a URL: https://httpbin.org/base64/<b64 of tiny HTML page>
+       The tiny page shows a textarea + Send button, and POSTs the text
+       to https://ntfy.sh/<topic>
+     - Main page subscribes to https://ntfy.sh/<topic>/sse via EventSource
+       and receives anything the phone sends.
+   ========================================================= */
+const PHONE = { topic: null, es: null, retryTimer: null };
+
+function phoneGenTopic(){
+  const chars = 'abcdefghijklmnopqrstuvwxyz0123456789';
+  let t = 'multiplay-';
+  for (let i = 0; i < 12; i++) t += chars[Math.floor(Math.random() * chars.length)];
+  return t;
+}
+
+/* Tiny mobile page that will be served by httpbin.org/base64 */
+function phoneBuildTinyPage(topic){
+  /* NOTE: intentionally minimal — every byte counts inside the QR */
+  return '<meta charset=utf-8>'
+    + '<meta name=viewport content="width=device-width,initial-scale=1">'
+    + '<body style="font:16px sans-serif;background:#111;color:#fff;padding:16px">'
+    + '<textarea id=t style="width:100%;height:150px;background:#222;color:#fff;'
+    + 'border:1px solid #444;border-radius:8px;padding:10px;box-sizing:border-box" '
+    + 'placeholder="Paste link or playlist"></textarea>'
+    + '<button onclick="fetch(\'https://ntfy.sh/' + topic + '\',{method:\'POST\','
+    + 'body:t.value}).then(()=>{t.value=\'\';t.placeholder=\'Sent ✓\'})" '
+    + 'style="width:100%;padding:14px;background:#4c8dff;color:#fff;border:0;'
+    + 'border-radius:8px;margin-top:10px;font-size:16px">Send</button>';
+}
+
+function phoneBuildQrUrl(topic){
+  const html = phoneBuildTinyPage(topic);
+  /* UTF-8 safe base64 */
+  const b64 = btoa(unescape(encodeURIComponent(html)));
+  return 'https://httpbin.org/base64/' + encodeURIComponent(b64);
+}
+
+function phoneRenderQr(){
+  const canvas = document.getElementById('qrCanvas');
+  if (!canvas) return;
+  if (!window.QRCode){
+    canvas.parentElement.innerHTML =
+      '<div style="color:#333;font-size:12px;text-align:center">QR library failed to load</div>';
+    return;
+  }
+  const url = phoneBuildQrUrl(PHONE.topic);
+  /* Clear previous drawing before regenerating */
+  const ctx = canvas.getContext('2d');
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+  QRCode.toCanvas(canvas, url, {
+    width: 260,
+    margin: 1,
+    errorCorrectionLevel: 'L',
+    color: { dark: '#0b0e14', light: '#ffffff' }
+  }, err => { if (err) console.error('QR error', err); });
+}
+
+function phoneSetStatus(msg, kind){
+  const el = document.getElementById('remoteStatus');
+  if (!el) return;
+  let cls = 'status';
+  if (kind === 'err') cls += ' err';
+  if (kind === 'ok')  cls += ' ok';
+  const dotCls = kind === 'ok' ? 'live-dot' : 'live-dot off';
+  el.className = cls;
+  el.innerHTML = '<span class="' + dotCls + '"></span>' + esc(msg);
+}
+
+function phoneConnect(){
+  phoneDisconnect();
+
+  const sseUrl = 'https://ntfy.sh/' + PHONE.topic + '/sse';
+
+  try {
+    PHONE.es = new EventSource(sseUrl);
+  } catch(err){
+    phoneSetStatus('Could not connect to relay', 'err');
+    return;
+  }
+
+  PHONE.es.onopen = () => {
+    phoneSetStatus('Connected — waiting for messages…', 'ok');
+  };
+
+  PHONE.es.onmessage = ev => {
+    let msg;
+    try { msg = JSON.parse(ev.data); } catch(e){ return; }
+    if (!msg || !msg.event) return;
+    if (msg.event === 'open'){
+      phoneSetStatus('Connected — waiting for messages…', 'ok');
+      return;
+    }
+    if (msg.event === 'message' && typeof msg.message === 'string'){
+      phoneHandleMessage(msg.message);
+    }
+  };
+
+  PHONE.es.onerror = () => {
+    phoneSetStatus('Connection lost — retrying…', 'err');
+    /* EventSource auto-reconnects; nothing more to do */
+  };
+}
+
+function phoneDisconnect(){
+  if (PHONE.retryTimer){ clearTimeout(PHONE.retryTimer); PHONE.retryTimer = null; }
+  if (PHONE.es){ try { PHONE.es.close(); } catch(e){} PHONE.es = null; }
+}
+
+function phoneHandleMessage(raw){
+  const text = String(raw || '').trim();
+  if (!text) return;
+
+  /* Full M3U playlist pasted from phone */
+  if (/#EXTM3U/i.test(text)){
+    try {
+      handlePlaylistText(text, undefined);
+      phoneSetStatus('Received a playlist from phone (' + text.length + ' chars)', 'ok');
+      switchTab('m3u');
+    } catch(err){
+      phoneSetStatus('Failed to parse playlist from phone', 'err');
+    }
+    return;
+  }
+
+  /* One or more URLs, one per line */
+  const lines = text.split(/\r?\n/).map(s => s.trim()).filter(Boolean);
+  const urls  = lines.filter(l => /^https?:\/\//i.test(l));
+
+  if (urls.length){
+    urls.forEach(u => addTile({ url: u, type: detectType(u), title: guessTitle(u) }));
+    phoneSetStatus(
+      'Received ' + urls.length + ' link' + (urls.length === 1 ? '' : 's') + ' from phone ✓',
+      'ok'
+    );
+    return;
+  }
+
+  /* Fallback: treat the whole thing as a single URL if it has no spaces */
+  if (!/\s/.test(text)){
+    addTile({ url: text, type: detectType(text), title: guessTitle(text) });
+    phoneSetStatus('Received link from phone ✓', 'ok');
+    return;
+  }
+
+  phoneSetStatus('Received text (no URL detected): ' + text.slice(0, 40), 'err');
+}
+
+/* --- Phone UI wiring --- */
+document.getElementById('btnNewTopic').onclick = () => {
+  PHONE.topic = phoneGenTopic();
+  try { localStorage.setItem('multiplay-topic', PHONE.topic); } catch(e){}
+  document.getElementById('remoteTopic').textContent = PHONE.topic;
+  phoneRenderQr();
+  phoneConnect();
+};
+
+document.getElementById('btnCopyTopic').onclick = async () => {
+  try {
+    await navigator.clipboard.writeText(PHONE.topic);
+    const btn = document.getElementById('btnCopyTopic');
+    const old = btn.textContent;
+    btn.textContent = '✓';
+    setTimeout(() => { btn.textContent = old; }, 1200);
+  } catch(e){}
+};
+
+/* --- Phone init --- */
+(function phoneInit(){
+  try { PHONE.topic = localStorage.getItem('multiplay-topic'); } catch(e){}
+  if (!PHONE.topic){ PHONE.topic = phoneGenTopic(); try { localStorage.setItem('multiplay-topic', PHONE.topic); } catch(e){} }
+
+  document.getElementById('remoteTopic').textContent = PHONE.topic;
+
+  /* QR library loads asynchronously — wait a moment if needed */
+  const tryQr = () => {
+    if (window.QRCode) phoneRenderQr();
+    else setTimeout(tryQr, 200);
+  };
+  tryQr();
+
+  phoneConnect();
+})();
+
+/* =========================================================
+   Init
+   ========================================================= */
+loadSettings();
+buildLayoutButtons();
+syncUI();
+renderChannels();
+
+window.addEventListener('resize', applyLayout);
+
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape' && document.fullscreenElement) document.exitFullscreen();
+});
+</script>
+</body>
+</html>
